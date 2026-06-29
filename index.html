@@ -87,10 +87,9 @@
             
             // gezielte Suche nach dem exakten Namen filtert alle anderen Geräte aus.
             // Wenn nur EIN Gerät den Filter erfüllt, entfällt das Suchen in einer langen Liste.
-            const device = await navigator.bluetooth.requestDevice({
-                filters: [{ name: 'NINA-Sensor' }],
-                optionalServices: [SERVICE_UUID]
-            });
+			const device = await navigator.bluetooth.requestDevice({
+				filters: [{ services: [SERVICE_UUID] }] // Filtert nach dem u-blox Service, ignoriert Namens-Fehler
+			});
 
             statusText.textContent = `Verbinde mit ${device.name}...`;
             const server = await device.gatt.connect();
