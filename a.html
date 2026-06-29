@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NINA-B416 Sensor Monitor</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            background-color: #f4f4f9;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            text-align: center;
+            width: 90%;
+            max-width: 400px;
+        }
+        button {
+            background-color: #007aff;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            width: 100%;
+            transition: background 0.2s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .status {
+            margin: 15px 0;
+            font-size: 14px;
+            color: #666;
+        }
+        .data-box {
+            background-color: #1c1c1e;
+            color: #30d158;
+            font-family: monospace;
+            font-size: 2.2rem;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 20px;
+            min-height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>POWER-CHECK MONITOR</h2>
+    <button id="connectBtn">Mit Sensor verbinden</button>
+    <div class="status" id="statusText">Status: Nicht verbunden</div>
+    
+    <div class="data-box" id="dataValue">
+        -- kN
+    </div>
+</div>
+
+<script>
+    // Die exakt mit den AT-Befehlen übereinstimmenden 128-Bit-UUIDs
+    const SERVICE_UUID = '2456e1b9-26e2-8f83-e744-f34f01e9d701';
+    const CHARACTERISTIC_UUID = '2456e1b9-26e2-8f83-e744-f34f01e9d703';
+
+    const connectBtn = document.getElementById('connectBtn');
+    const statusText = document.getElementById('statusText');
+    const dataValue = document.getElementById('dataValue');
+
+    connectBtn.addEventListener('click', async () => {
+        try {
+            statusText.textContent = "Status: Verbinde direkt...";
+            
+            // gezielte Suche nach dem exakten Namen filtert alle anderen Geräte aus.
+            // Wenn nur EIN Gerät den Filter erfüllt, entfällt das Suchen in einer langen Liste.
+            const device = await navigator.bluetooth.requestDevice({
+                filters: [{ name: 'NINA-Sensor' }],
+                optionalServices: [SERVICE_UUID]
+            });
+
+            statusText.textContent = `Verbinde mit ${device.name}...`;
+            const server = await device.gatt.connect();
+
+            statusText.textContent = "Öffne u-blox Service...";
+            const service = await server.getPrimaryService(SERVICE_UUID);
+
+            statusText.textContent = "Öffne Datenkanal...";
+            const characteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+
+            statusText.textContent = "Abonniere Messwerte...";
+            await characteristic.startNotifications();
+            
+            characteristic.addEventListener('characteristicvaluechanged', (event) => {
+                const value = event.target.value;
+                const decoder = new TextDecoder('utf-8');
+                const decodedString = decoder.decode(value).trim();
+                
+                // Erkennung, ob Text oder rohes Byte übertragen wurde + Ergänzung der Einheit
+                if (/^[\x20-\x7E]*$/.test(decodedString) && decodedString.length > 0) {
+                    dataValue.textContent = `${decodedString} kN`;
+                } else {
+                    dataValue.textContent = `${value.getUint8(0)} kN`;
+                }
+            });
+
+            statusText.textContent = "Status: Verbunden & Bereit";
+            connectBtn.style.backgroundColor = "#34c759";
+            connectBtn.textContent = "Verbunden";
+
+            // Event-Handling bei Verbindungsabbruch
+            device.addEventListener('gattserverdisconnected', () => {
+                statusText.textContent = "Status: Verbindung verloren";
+                dataValue.textContent = "-- kN";
+                connectBtn.style.backgroundColor = "#007aff";
+                connectBtn.textContent = "Mit Sensor verbinden";
+            });
+
+        } catch (error) {
+            console.error("BLE-Fehler:", error);
+            statusText.textContent = `Fehler: ${error.message}`;
+        }
+    });
+</script>
+
+</body>
+</html>
