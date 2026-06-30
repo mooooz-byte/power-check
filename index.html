@@ -15,6 +15,7 @@
             justify-content: center;
             min-height: 100vh;
             margin: 0;
+            padding: 20px 0;
         }
         .container {
             background: white;
@@ -23,7 +24,7 @@
             box-shadow: 0 4px 12px rgba(0,0,0,0.1);
             text-align: center;
             width: 90%;
-            max-width: 400px;
+            max-width: 440px;
         }
         button {
             background-color: #007aff;
@@ -36,14 +37,22 @@
             cursor: pointer;
             width: 100%;
             transition: background 0.2s;
+            margin-bottom: 10px;
         }
         button:hover {
             background-color: #0056b3;
         }
-        .status {
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .status-container {
+            display: flex;
+            justify-content: space-between;
             margin: 15px 0;
             font-size: 14px;
             color: #666;
+            padding: 0 5px;
         }
         .data-box {
             background-color: #1c1c1e;
@@ -52,11 +61,42 @@
             font-size: 2.2rem;
             padding: 20px;
             border-radius: 8px;
-            margin-top: 20px;
+            margin-top: 10px;
             min-height: 60px;
             display: flex;
             align-items: center;
             justify-content: center;
+        }
+        .section-title {
+            text-align: left;
+            font-size: 14px;
+            font-weight: bold;
+            color: #444;
+            margin: 20px 0 5px 0;
+        }
+        .send-box {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        input[type="text"] {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        .log-box {
+            background-color: #2c2c2e;
+            color: #ffffff;
+            font-family: monospace;
+            font-size: 12px;
+            padding: 12px;
+            border-radius: 8px;
+            height: 120px;
+            overflow-y: auto;
+            text-align: left;
+            white-space: pre-wrap;
         }
     </style>
 </head>
@@ -65,72 +105,157 @@
 <div class="container">
     <h2>POWER-CHECK MONITOR</h2>
     <button id="connectBtn">Mit Sensor verbinden</button>
-    <div class="status" id="statusText">Status: Nicht verbunden</div>
+    
+    <div class="status-container">
+        <div id="statusText">Status: Nicht verbunden</div>
+        <div id="rssiText">Signal (RSSI): -- dBm</div>
+    </div>
     
     <div class="data-box" id="dataValue">
         -- kN
     </div>
+
+    <div class="section-title">Befehl an Modul senden:</div>
+    <div class="send-box">
+        <input type="text" id="sendInput" placeholder="z.B. Test oder AT-Kommando" disabled>
+        <button id="sendBtn" style="width: auto; margin: 0;" disabled>Senden</button>
+    </div>
+
+    <div class="section-title">Nachrichten-Verlauf (Log):</div>
+    <div class="log-box" id="logConsole">-- Wartet auf Verbindung --</div>
 </div>
 
 <script>
-    // Die exakt mit den AT-Befehlen übereinstimmenden 128-Bit-UUIDs
     const SERVICE_UUID = '2456e1b9-26e2-8f83-e744-f34f01e9d701';
     const CHARACTERISTIC_UUID = '2456e1b9-26e2-8f83-e744-f34f01e9d703';
 
     const connectBtn = document.getElementById('connectBtn');
     const statusText = document.getElementById('statusText');
+    const rssiText = document.getElementById('rssiText');
     const dataValue = document.getElementById('dataValue');
+    const sendInput = document.getElementById('sendInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const logConsole = document.getElementById('logConsole');
+
+    let bleCharacteristic = null;
+
+    // Hilfsfunktion für Log-Einträge mit Zeitstempel
+    function logToConsole(message) {
+        const now = new Date();
+        const timeStr = now.toTimeString().split(' ')[0];
+        if (logConsole.textContent === "-- Wartet auf Verbindung --") {
+            logConsole.textContent = "";
+        }
+        logConsole.textContent += `[${timeStr}] ${message}\n`;
+        logConsole.scrollTop = logConsole.scrollHeight; // Auto-Scroll nach unten
+    }
 
     connectBtn.addEventListener('click', async () => {
         try {
             statusText.textContent = "Status: Verbinde direkt...";
             
-            // gezielte Suche nach dem exakten Namen filtert alle anderen Geräte aus.
-            // Wenn nur EIN Gerät den Filter erfüllt, entfällt das Suchen in einer langen Liste.
-			const device = await navigator.bluetooth.requestDevice({
-				filters: [{ services: [SERVICE_UUID] }] // Filtert nach dem u-blox Service, ignoriert Namens-Fehler
-			});
+            const device = await navigator.bluetooth.requestDevice({
+                filters: [{ services: [SERVICE_UUID] }]
+            });
 
             statusText.textContent = `Verbinde mit ${device.name}...`;
+            logToConsole(`Gerät gefunden: ${device.name}`);
+            
+            // RSSI-Überwachung starten (während Advertisements empfangen werden)
+            try {
+                device.addEventListener('advertisementreceived', (event) => {
+                    if (event.rssi) {
+                        rssiText.textContent = `Signal (RSSI): ${event.rssi} dBm`;
+                    }
+                });
+                await device.watchAdvertisements();
+                logToConsole("RSSI-Überwachung aktiviert.");
+            } catch (rssiError) {
+                console.warn("RSSI-Überwachung vom Browser nicht unterstützt:", rssiError);
+            }
+
             const server = await device.gatt.connect();
 
             statusText.textContent = "Öffne u-blox Service...";
             const service = await server.getPrimaryService(SERVICE_UUID);
 
             statusText.textContent = "Öffne Datenkanal...";
-            const characteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+            bleCharacteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
 
             statusText.textContent = "Abonniere Messwerte...";
-            await characteristic.startNotifications();
+            await bleCharacteristic.startNotifications();
             
-            characteristic.addEventListener('characteristicvaluechanged', (event) => {
+            // Sende-Elemente freischalten
+            sendInput.disabled = false;
+            sendBtn.disabled = false;
+            
+            bleCharacteristic.addEventListener('characteristicvaluechanged', (event) => {
                 const value = event.target.value;
                 const decoder = new TextDecoder('utf-8');
                 const decodedString = decoder.decode(value).trim();
+                let displayValue = "";
                 
-                // Erkennung, ob Text oder rohes Byte übertragen wurde + Ergänzung der Einheit
                 if (/^[\x20-\x7E]*$/.test(decodedString) && decodedString.length > 0) {
-                    dataValue.textContent = `${decodedString} kN`;
+                    displayValue = decodedString;
+                    logToConsole(`Empfangen (Text): ${decodedString}`);
                 } else {
-                    dataValue.textContent = `${value.getUint8(0)} kN`;
+                    displayValue = value.getUint8(0).toString();
+                    logToConsole(`Empfangen (Byte): ${displayValue}`);
                 }
+                
+                dataValue.textContent = `${displayValue} kN`;
             });
 
             statusText.textContent = "Status: Verbunden & Bereit";
             connectBtn.style.backgroundColor = "#34c759";
             connectBtn.textContent = "Verbunden";
+            logToConsole("Erfolgreich verbunden und Datenkanal abonniert.");
 
             // Event-Handling bei Verbindungsabbruch
             device.addEventListener('gattserverdisconnected', () => {
                 statusText.textContent = "Status: Verbindung verloren";
+                rssiText.textContent = "Signal (RSSI): -- dBm";
                 dataValue.textContent = "-- kN";
                 connectBtn.style.backgroundColor = "#007aff";
                 connectBtn.textContent = "Mit Sensor verbinden";
+                sendInput.disabled = true;
+                sendBtn.disabled = true;
+                bleCharacteristic = null;
+                logToConsole("Verbindung zum Gerät abgebrochen.");
             });
 
         } catch (error) {
             console.error("BLE-Fehler:", error);
             statusText.textContent = `Fehler: ${error.message}`;
+            logToConsole(`FEHLER: ${error.message}`);
+        }
+    });
+
+    // Absende-Funktion für Textdaten
+    sendBtn.addEventListener('click', async () => {
+        if (!bleCharacteristic || !sendInput.value) return;
+
+        const textToSend = sendInput.value;
+        try {
+            // Text in ein UTF-8 Byte-Array konvertieren
+            const encoder = new TextEncoder();
+            const dataBuffer = encoder.encode(textToSend);
+
+            // Daten an die GATT-Charakteristik des u-blox Moduls schreiben
+            await bleCharacteristic.writeValue(dataBuffer);
+            
+            logToConsole(`Gesendet: ${textToSend}`);
+            sendInput.value = ""; // Textfeld leeren
+        } catch (error) {
+            console.error("Sende-Fehler:", error);
+            logToConsole(`Sende-Fehler: ${error.message}`);
+        }
+    });
+
+    // Ermöglicht das Absenden mittels Enter-Taste im Textfeld
+    sendInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter' && !sendBtn.disabled) {
+            sendBtn.click();
         }
     });
 </script>
