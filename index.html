@@ -26,6 +26,23 @@
             width: 90%;
             max-width: 440px;
         }
+        .logo-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+        .logo {
+            max-height: 50px;
+            max-width: 45%;
+            object-fit: contain;
+        }
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
         button {
             background-color: #007aff;
             color: white;
@@ -37,7 +54,6 @@
             cursor: pointer;
             width: 100%;
             transition: background 0.2s;
-            margin-bottom: 10px;
         }
         button:hover {
             background-color: #0056b3;
@@ -46,12 +62,17 @@
             background-color: #cccccc;
             cursor: not-allowed;
         }
+        #disconnectBtn {
+            background-color: #ff3b30;
+        }
+        #disconnectBtn:hover {
+            background-color: #d32f2f;
+        }
         .status-container {
-            display: flex;
-            justify-content: space-between;
             margin: 15px 0;
             font-size: 14px;
             color: #666;
+            text-align: left;
             padding: 0 5px;
         }
         .data-box {
@@ -90,10 +111,10 @@
             background-color: #2c2c2e;
             color: #ffffff;
             font-family: monospace;
-            font-size: 12px;
-            padding: 12px;
+            font-size: 11px;
+            padding: 10px;
             border-radius: 8px;
-            height: 120px;
+            height: 75px; /* Etwas kleinere Konsole */
             overflow-y: auto;
             text-align: left;
             white-space: pre-wrap;
@@ -103,12 +124,20 @@
 <body>
 
 <div class="container">
+    <div class="logo-container">
+        <img src="Logo_OJ_100mm.png" alt="OTT-JAKOB Logo" class="logo">
+        <img src="Power_Check_sw.png" alt="Power-Check Logo" class="logo">
+    </div>
+
     <h2>POWER-CHECK MONITOR</h2>
-    <button id="connectBtn">Mit Sensor verbinden</button>
+    
+    <div class="btn-group">
+        <button id="connectBtn">Verbinden</button>
+        <button id="disconnectBtn" disabled>Trennen</button>
+    </div>
     
     <div class="status-container">
         <div id="statusText">Status: Nicht verbunden</div>
-        <div id="rssiText">Signal (RSSI): -- dBm</div>
     </div>
     
     <div class="data-box" id="dataValue">
@@ -130,16 +159,16 @@
     const CHARACTERISTIC_UUID = '2456e1b9-26e2-8f83-e744-f34f01e9d703';
 
     const connectBtn = document.getElementById('connectBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
     const statusText = document.getElementById('statusText');
-    const rssiText = document.getElementById('rssiText');
     const dataValue = document.getElementById('dataValue');
     const sendInput = document.getElementById('sendInput');
     const sendBtn = document.getElementById('sendBtn');
     const logConsole = document.getElementById('logConsole');
 
+    let bleDevice = null;
     let bleCharacteristic = null;
 
-    // Hilfsfunktion für Log-Einträge mit Zeitstempel
     function logToConsole(message) {
         const now = new Date();
         const timeStr = now.toTimeString().split(' ')[0];
@@ -147,34 +176,24 @@
             logConsole.textContent = "";
         }
         logConsole.textContent += `[${timeStr}] ${message}\n`;
-        logConsole.scrollTop = logConsole.scrollHeight; // Auto-Scroll nach unten
+        logConsole.scrollTop = logConsole.scrollHeight;
     }
 
     connectBtn.addEventListener('click', async () => {
         try {
             statusText.textContent = "Status: Verbinde direkt...";
             
-            const device = await navigator.bluetooth.requestDevice({
+            bleDevice = await navigator.bluetooth.requestDevice({
                 filters: [{ services: [SERVICE_UUID] }]
             });
 
-            statusText.textContent = `Verbinde mit ${device.name}...`;
-            logToConsole(`Gerät gefunden: ${device.name}`);
-            
-            // RSSI-Überwachung starten (während Advertisements empfangen werden)
-            try {
-                device.addEventListener('advertisementreceived', (event) => {
-                    if (event.rssi) {
-                        rssiText.textContent = `Signal (RSSI): ${event.rssi} dBm`;
-                    }
-                });
-                await device.watchAdvertisements();
-                logToConsole("RSSI-Überwachung aktiviert.");
-            } catch (rssiError) {
-                console.warn("RSSI-Überwachung vom Browser nicht unterstützt:", rssiError);
-            }
+            statusText.textContent = `Verbinde mit ${bleDevice.name}...`;
+            logToConsole(`Gerät gefunden: ${bleDevice.name}`);
 
-            const server = await device.gatt.connect();
+            // Event-Handling bei Verbindungsabbruch (egal ob manuell oder Signalverlust)
+            bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+
+            const server = await bleDevice.gatt.connect();
 
             statusText.textContent = "Öffne u-blox Service...";
             const service = await server.getPrimaryService(SERVICE_UUID);
@@ -185,9 +204,11 @@
             statusText.textContent = "Abonniere Messwerte...";
             await bleCharacteristic.startNotifications();
             
-            // Sende-Elemente freischalten
+            // UI-Elemente freischalten
             sendInput.disabled = false;
             sendBtn.disabled = false;
+            disconnectBtn.disabled = false;
+            connectBtn.disabled = true;
             
             bleCharacteristic.addEventListener('characteristicvaluechanged', (event) => {
                 const value = event.target.value;
@@ -197,7 +218,7 @@
                 
                 if (/^[\x20-\x7E]*$/.test(decodedString) && decodedString.length > 0) {
                     displayValue = decodedString;
-                    logToConsole(`Empfangen (Text): ${decodedString}`);
+                    logToConsole(`Empfangen: ${decodedString}`);
                 } else {
                     displayValue = value.getUint8(0).toString();
                     logToConsole(`Empfangen (Byte): ${displayValue}`);
@@ -209,20 +230,7 @@
             statusText.textContent = "Status: Verbunden & Bereit";
             connectBtn.style.backgroundColor = "#34c759";
             connectBtn.textContent = "Verbunden";
-            logToConsole("Erfolgreich verbunden und Datenkanal abonniert.");
-
-            // Event-Handling bei Verbindungsabbruch
-            device.addEventListener('gattserverdisconnected', () => {
-                statusText.textContent = "Status: Verbindung verloren";
-                rssiText.textContent = "Signal (RSSI): -- dBm";
-                dataValue.textContent = "-- kN";
-                connectBtn.style.backgroundColor = "#007aff";
-                connectBtn.textContent = "Mit Sensor verbinden";
-                sendInput.disabled = true;
-                sendBtn.disabled = true;
-                bleCharacteristic = null;
-                logToConsole("Verbindung zum Gerät abgebrochen.");
-            });
+            logToConsole("Erfolgreich verbunden.");
 
         } catch (error) {
             console.error("BLE-Fehler:", error);
@@ -231,28 +239,49 @@
         }
     });
 
+    // Manuelles Trennen der Verbindung
+    disconnectBtn.addEventListener('click', () => {
+        if (bleDevice && bleDevice.gatt.connected) {
+            logToConsole("Verbindung wird manuell getrennt...");
+            bleDevice.gatt.disconnect();
+        }
+    });
+
+    // Zentrale Funktion für den Zustand nach dem Trennen
+    function onDisconnected() {
+        statusText.textContent = "Status: Nicht verbunden";
+        dataValue.textContent = "-- kN";
+        connectBtn.style.backgroundColor = "#007aff";
+        connectBtn.textContent = "Verbinden";
+        
+        // UI zurücksetzen
+        connectBtn.disabled = false;
+        disconnectBtn.disabled = true;
+        sendInput.disabled = true;
+        sendBtn.disabled = true;
+        
+        bleCharacteristic = null;
+        logToConsole("Verbindung getrennt.");
+    }
+
     // Absende-Funktion für Textdaten
     sendBtn.addEventListener('click', async () => {
         if (!bleCharacteristic || !sendInput.value) return;
 
         const textToSend = sendInput.value;
         try {
-            // Text in ein UTF-8 Byte-Array konvertieren
             const encoder = new TextEncoder();
             const dataBuffer = encoder.encode(textToSend);
-
-            // Daten an die GATT-Charakteristik des u-blox Moduls schreiben
             await bleCharacteristic.writeValue(dataBuffer);
             
             logToConsole(`Gesendet: ${textToSend}`);
-            sendInput.value = ""; // Textfeld leeren
+            sendInput.value = "";
         } catch (error) {
             console.error("Sende-Fehler:", error);
             logToConsole(`Sende-Fehler: ${error.message}`);
         }
     });
 
-    // Ermöglicht das Absenden mittels Enter-Taste im Textfeld
     sendInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter' && !sendBtn.disabled) {
             sendBtn.click();
