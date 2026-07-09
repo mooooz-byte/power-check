@@ -272,7 +272,7 @@
         try {
             const encoder = new TextEncoder();
             const dataBuffer = encoder.encode(textToSend);
-            await bleCharacteristic.writeValue(dataBuffer);
+            await bleCharacteristic.writeValueWithoutResponse(dataBuffer);
             
             logToConsole(`Gesendet: ${textToSend}`);
             sendInput.value = "";
