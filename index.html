@@ -310,21 +310,30 @@
             disconnectBtn.disabled = false;
             connectBtn.disabled = true;
             
-            bleCharacteristic.addEventListener('characteristicvaluechanged', (event) => {
-                const value = event.target.value;
-                const decoder = new TextDecoder('utf-8');
-                const decodedString = decoder.decode(value).trim();
-                let displayValue = "";
-                
-                if (/^[ -~]*$/.test(decodedString) && decodedString.length > 0) {
-                    displayValue = decodedString;
-                    logToConsole(`Empfangen: ${decodedString}`);
-                } else {
-                    displayValue = value.getUint8(0).toString();
-                    logToConsole(`Empfangen (Byte): ${displayValue}`);
+bleCharacteristic.addEventListener('characteristicvaluechanged', (event) => {
+                try {
+                    const value = event.target.value;
+                    if (!value || value.byteLength === 0) return;
+
+                    const decoder = new TextDecoder('utf-8');
+                    const decodedString = decoder.decode(value).trim();
+                    let displayValue = "";
+                    
+                    // Prüfen, ob es sich um lesbaren Text handelt
+                    if (/^[\x20-\x7E]*$/.test(decodedString) && decodedString.length > 0) {
+                        displayValue = decodedString;
+                        logToConsole(`Empfangen: ${decodedString}`);
+                    } else {
+                        // Sicherer Byte-Ausgang für Mobilgeräte
+                        displayValue = value.getUint8(0).toString();
+                        logToConsole(`Empfangen (Byte): ${displayValue}`);
+                    }
+                    
+                    dataValue.textContent = `${displayValue} kN`;
+                } catch (e) {
+                    console.error("Fehler beim Datenempfang:", e);
+                    logToConsole(`Empfangs-Fehler: ${e.message}`);
                 }
-                
-                dataValue.textContent = `${displayValue} kN`;
             });
 
             statusText.textContent = "Status: Verbunden & Bereit";
@@ -386,22 +395,28 @@
         }
     });
 
-    // Allgemeine Absende-Funktion für das Freitextfeld
+// Absende-Funktion für Textdaten (Optimiert für Smartphones)
     sendBtn.addEventListener('click', async () => {
-        if (!sendInput.value) return;
+        if (!bleCharacteristic || !sendInput.value) return;
+
         const textToSend = sendInput.value;
-        
-        const success = await sendBleData(textToSend);
-        if (success) {
-            // Falls manuell 1 oder 0 eingegeben wurde, UI-Zustand der LED-Buttons mitziehen
-            if (textToSend === "1") {
-                ledOnBtn.classList.add('active');
-                ledOffBtn.classList.remove('active');
-            } else if (textToSend === "0") {
-                ledOffBtn.classList.add('active');
-                ledOnBtn.classList.remove('active');
+        try {
+            const encoder = new TextEncoder();
+            const dataBuffer = encoder.encode(textToSend);
+            
+            // ÄNDERUNG HIER: Explizit mit Rückmeldung schreiben (wichtig für iOS/Android)
+            if (typeof bleCharacteristic.writeValueWithResponse === 'function') {
+                await bleCharacteristic.writeValueWithResponse(dataBuffer);
+            } else {
+                // Fallback für ältere Browser-Versionen
+                await bleCharacteristic.writeValue(dataBuffer);
             }
+            
+            logToConsole(`Gesendet: ${textToSend}`);
             sendInput.value = "";
+        } catch (error) {
+            console.error("Sende-Fehler:", error);
+            logToConsole(`Sende-Fehler: ${error.message}`);
         }
     });
 
