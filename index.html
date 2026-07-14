@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.00">
     <title>NINA-B416 Sensor Monitor</title>
     <style>
         :root {
@@ -282,8 +282,12 @@
         try {
             statusText.textContent = "Status: Verbinde direkt...";
             
+            // Wir suchen nach dem Namen und registrieren die Service-UUID im Hintergrund
             bleDevice = await navigator.bluetooth.requestDevice({
-                filters: [{ services: [SERVICE_UUID] }]
+                filters: [
+                    { name: "NINA-Sensor" } // Filtert nach dem Namen aus AT+UBTLN
+                ],
+                optionalServices: [SERVICE_UUID] // Schaltet den Service für die spätere Nutzung frei
             });
 
             statusText.textContent = `Verbinde mit ${bleDevice.name}...`;
