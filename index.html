@@ -257,8 +257,7 @@
         if (logConsole.textContent === "-- Wartet auf Verbindung --") {
             logConsole.textContent = "";
         }
-        logConsole.textContent += `[${timeStr}] ${message}
-`;
+        logConsole.textContent += `[${timeStr}] ${message}\n`;
         logConsole.scrollTop = logConsole.scrollHeight;
     }
 
@@ -278,16 +277,19 @@
         }
     }
 
+    // Hilfsfunktion für künstliche Pausen (Handshake-Delays für iOS/Bluefy)
+    const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
     connectBtn.addEventListener('click', async () => {
         try {
-            statusText.textContent = "Status: Verbinde direkt...";
+            statusText.textContent = "Status: Suche Gerät...";
             
-            // Wir suchen nach dem Namen und registrieren die Service-UUID im Hintergrund
+            // ÄNDERUNG 1: Filter auf namePrefix geändert, damit "NINA-Sensor-XXXX" ebenfalls gefunden wird!
             bleDevice = await navigator.bluetooth.requestDevice({
                 filters: [
-                    { name: "NINA-Sensor" } // Filtert nach dem Namen aus AT+UBTLN
+                    { namePrefix: "NINA-Sensor" } 
                 ],
-                optionalServices: [SERVICE_UUID] // Schaltet den Service für die spätere Nutzung frei
+                optionalServices: [SERVICE_UUID]
             });
 
             statusText.textContent = `Verbinde mit ${bleDevice.name}...`;
@@ -295,15 +297,23 @@
 
             bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
 
+            // Verbindung aufbauen
             const server = await bleDevice.gatt.connect();
+            
+            // ÄNDERUNG 2: iOS braucht nach dem Connect eine kurze Pause (wie dein manuelles Tippen auf der Konsole)
+            statusText.textContent = "Initialisiere Verbindung...";
+            await delay(500); 
 
             statusText.textContent = "Öffne u-blox Service...";
             const service = await server.getPrimaryService(SERVICE_UUID);
+            await delay(200);
 
             statusText.textContent = "Öffne Datenkanal...";
             bleCharacteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+            await delay(200);
 
-            statusText.textContent = "Abonniere Messwerte...";
+            statusText.textContent = "Abonniere Messwerte (AT+UBTGW)...";
+            // startNotifications() entspricht exakt deinem manuellen "AT+UBTGW=0,33,0100"
             await bleCharacteristic.startNotifications();
             
             // UI-Elemente freischalten
@@ -316,23 +326,19 @@
             
             bleCharacteristic.addEventListener('characteristicvaluechanged', (event) => {
                 try {
-                    // Robusterer Zugriff auf das DataView-Objekt
                     const value = event.target.value || event.currentTarget.value; 
                     if (!value || value.byteLength === 0) return;
             
-                    // Sicherstellen, dass wir ein ArrayBuffer-kompatibles Objekt dekodieren
                     const buffer = value.buffer ? value.buffer : value;
                     const decoder = new TextDecoder('utf-8');
                     const decodedString = decoder.decode(buffer).trim();
                     
                     let displayValue = "";
                     
-                    // Prüfen, ob es sich um lesbaren ASCII-Text handelt
                     if (/^[\x20-\x7E]*$/.test(decodedString) && decodedString.length > 0) {
                         displayValue = decodedString;
                         logToConsole(`Empfangen: ${decodedString}`);
                     } else {
-                        // Falls Rohdaten gesendet wurden (z.B. 0x7B für 123)
                         displayValue = value.getUint8(0).toString();
                         logToConsole(`Empfangen (Byte): ${displayValue}`);
                     }
@@ -347,7 +353,7 @@
             statusText.textContent = "Status: Verbunden & Bereit";
             connectBtn.style.backgroundColor = "#34c759";
             connectBtn.textContent = "Verbunden";
-            logToConsole("Erfolgreich verbunden.");
+            logToConsole("Erfolgreich verbunden und abonniert.");
 
         } catch (error) {
             console.error("BLE-Fehler:", error);
@@ -403,7 +409,7 @@
         }
     });
 
-// Absende-Funktion für Textdaten (Optimiert für Smartphones)
+    // Absende-Funktion für Textdaten (Optimiert für Smartphones)
     sendBtn.addEventListener('click', async () => {
         if (!bleCharacteristic || !sendInput.value) return;
 
@@ -412,11 +418,9 @@
             const encoder = new TextEncoder();
             const dataBuffer = encoder.encode(textToSend);
             
-            // ÄNDERUNG HIER: Explizit mit Rückmeldung schreiben (wichtig für iOS/Android)
             if (typeof bleCharacteristic.writeValueWithResponse === 'function') {
                 await bleCharacteristic.writeValueWithResponse(dataBuffer);
             } else {
-                // Fallback für ältere Browser-Versionen
                 await bleCharacteristic.writeValue(dataBuffer);
             }
             
