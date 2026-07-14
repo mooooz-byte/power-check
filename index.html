@@ -200,7 +200,7 @@
         <img src="Power_Check_sw.png" alt="Power-Check Logo" class="logo">
     </div>
 
-    <h2>POWER-CHECK MONITOR</h2>
+    <h2>POWER-CHECK MONITOR V1.0</h2>
     
     <div class="btn-group">
         <button id="connectBtn">Verbinden</button>
@@ -310,21 +310,25 @@
             disconnectBtn.disabled = false;
             connectBtn.disabled = true;
             
-bleCharacteristic.addEventListener('characteristicvaluechanged', (event) => {
+            bleCharacteristic.addEventListener('characteristicvaluechanged', (event) => {
                 try {
-                    const value = event.target.value;
+                    // Robusterer Zugriff auf das DataView-Objekt
+                    const value = event.target.value || event.currentTarget.value; 
                     if (!value || value.byteLength === 0) return;
-
+            
+                    // Sicherstellen, dass wir ein ArrayBuffer-kompatibles Objekt dekodieren
+                    const buffer = value.buffer ? value.buffer : value;
                     const decoder = new TextDecoder('utf-8');
-                    const decodedString = decoder.decode(value).trim();
+                    const decodedString = decoder.decode(buffer).trim();
+                    
                     let displayValue = "";
                     
-                    // Prüfen, ob es sich um lesbaren Text handelt
+                    // Prüfen, ob es sich um lesbaren ASCII-Text handelt
                     if (/^[\x20-\x7E]*$/.test(decodedString) && decodedString.length > 0) {
                         displayValue = decodedString;
                         logToConsole(`Empfangen: ${decodedString}`);
                     } else {
-                        // Sicherer Byte-Ausgang für Mobilgeräte
+                        // Falls Rohdaten gesendet wurden (z.B. 0x7B für 123)
                         displayValue = value.getUint8(0).toString();
                         logToConsole(`Empfangen (Byte): ${displayValue}`);
                     }
